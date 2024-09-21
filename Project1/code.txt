@@ -1,0 +1,30 @@
+CSS Fall 2024 Proj 1
+
+#creating folder
+cd "C:\git\CSSTP"
+git clone "https://github.com/nereidagra/Computational-Social-Science-Projects.git"
+ls
+
+#navigating to folder
+cd "C:\git\CSSTP\Computational-Social-Science-Projects"
+ls
+
+#making spot for Project 1
+mkdir Project1
+ls
+
+#making a mistake navigating to Project 1 and breaking command 
+cd Project`
+> ^C
+
+#Navigating to project 1
+cd Project1
+ls
+
+#creating this file
+touch code.txt
+ls
+
+#editting this file
+nano code.txt
+
