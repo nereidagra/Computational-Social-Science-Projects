@@ -25,6 +25,42 @@ ls
 touch code.txt
 ls
 
-#editting this file
+#editing this file
 nano code.txt
+
+#back to main folder
+cd -
+
+#staging everything
+git add *
+
+#checking
+git status
+
+#Committing and being careful to not commit with no arguments due to previous fiasco
+git commit -m "First step of Project 1"
+
+#pushing
+git push
+
+#The push worked but I have never been asked for a key and I get the following error: "fatal: unable to connect to cache daemon: Unknown error
+Enumerating objects: 5, done.
+Counting objects: 100% (5/5), done.
+Delta compression using up to 12 threads
+Compressing objects: 100% (3/3), done.
+Writing objects: 100% (4/4), 578 bytes | 578.00 KiB/s, done.
+Total 4 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
+To https://github.com/nereidagra/Computational-Social-Science-Projects.git
+   7af05c1..901436c  main -> main"
+
+#checking
+git status
+
+# Response: "On branch main
+Your branch is up to date with 'origin/main'.
+
+nothing to commit, working tree clean"
+
+
+
 
