@@ -113,8 +113,8 @@ ggplot(ypsps, aes(x = factor(treatment), fill = factor(student_Gen))) +
 
 #They seem pretty balanced! Both are around 50%. 
 
-# Simulate the process 10,000 times
-sim_results <- replicate(10000, {
+# Simulate the process 1000 times
+sim_results <- replicate(1000, {
   # Randomly assign treatment/control
   temp_data <- ypsps %>%
     mutate(treatment = sample(c(0, 1), n(), replace = TRUE))
@@ -149,7 +149,7 @@ sim_results_df <- data.frame(diff = unlist(sim_results))
 # Visualize the distribution of differences in male proportions between treatment/control across simulations
 ggplot(sim_results_df, aes(x = diff)) +
   geom_histogram(binwidth = 0.5, fill = "steelblue", color = "black") +
-  labs(title = "Distribution of Treatment/Control Balance Across 10,000 Simulations",
+  labs(title = "Distribution of Treatment/Control Balance Across 1000 Simulations",
        x = "Difference in Male Proportion (Treatment - Control)",
        y = "Frequency") +
   theme_minimal()
