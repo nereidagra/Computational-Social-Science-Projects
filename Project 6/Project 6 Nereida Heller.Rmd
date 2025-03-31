@@ -79,7 +79,7 @@ ggplot(ypsps %>%
 
 # Visualize the distribution by treatment/control (ggplot)
 ggplot(ypsps %>%
-         mutate(student_Gen = ifelse(student_Gen == 0, "Male", "Female")), 
+         mutate(student_Gen = ifelse(student_Gen == 0, "Female", "Male")), 
        aes(x = student_Gen)) +
   geom_bar(fill = "steelblue", color = "black") +
   labs(title = "Distribution of Student Gender by Treatment/Control", x = "Gender", y = "Count") +
@@ -88,7 +88,7 @@ ggplot(ypsps %>%
 
 # trying to add data labels
 ypsps %>%
-  mutate(student_Gen = ifelse(student_Gen == 0, "Male", "Female")) %>%
+  mutate(student_Gen = ifelse(student_Gen == 0, "Female", "Male")) %>%
   group_by(treatment, student_Gen) %>%
   summarise(count = n()) %>%
   ungroup() %>%
@@ -150,7 +150,7 @@ sim_results_df <- data.frame(diff = unlist(sim_results))
 ggplot(sim_results_df, aes(x = diff)) +
   geom_histogram(binwidth = 0.5, fill = "steelblue", color = "black") +
   labs(title = "Distribution of Treatment/Control Balance Across 1000 Simulations",
-       x = "Difference in Male Proportion (Treatment - Control)",
+       x = "Difference in Gender Proportion (Treatment - Control)",
        y = "Frequency") +
   theme_minimal()
 
@@ -164,7 +164,7 @@ ggplot(sim_results_df, aes(x = diff)) +
     \item \textbf{What do you see across your simulations? Why does independence of treatment assignment and baseline covariates not guarantee balance of treatment assignment and baseline covariates?}
 \end{enumerate}
 
-Your Answer:...
+Your Answer: Across 1,000 simulations, it looks like the gender is pretty balanced, but it's clear that there are available random selections that would give me highly undesirable gender balances (10-1 female or male in the treatment group, for example). This is not surprising, since, as the questions states, "independence of treatment assignment and baseline covariates not guarantee balance of treatment assignment and baseline covariates." "Independence" just means that the one doesn't have anything to do with the other; it doesn't _guarantee_ that distribution will be balanced. Randomization might just result in a skewed treatment or control group, or the sample might just not have that many men to distribute between groups.  
 
 # Propensity Score Matching
 
