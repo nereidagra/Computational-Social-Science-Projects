@@ -25,10 +25,18 @@ Otherwise, we also have covariates measured for survey responses to various ques
 # Feel free to load other libraries as you wish
 library(tidyverse)
 library(MatchIt)
+library(MatchIt)
+library(ggplot2)
+library(dplyr)
+library(tableone)
+library(cobalt)
+library(gridExtra) 
+library(optmatch)
 
 # Load ypsps data
 ypsps <- read_csv('data/ypsps.csv')
 head(ypsps)
+glimpse(ypsps)
 ```
 
 # Randomization
@@ -171,12 +179,69 @@ Your Answer: Across 1,000 simulations, it looks like the gender is pretty balanc
 ## One Model
 Select covariates that you think best represent the "true" model predicting whether a student chooses to attend college, and estimate a propensity score model to calculate the Average Treatment Effect on the Treated (ATT). Plot the balance of the top 10 (or fewer if you select fewer covariates). Report the balance of the p-scores across both the treatment and control groups, and using a threshold of standardized mean difference of p-score $\leq .1$, report the number of covariates that meet that balance threshold.
 
+NH: Only one covariate meets the balance threshold for now!
+
 ```{r}
 # Select covariates that represent the "true" model for selection, fit model
 
+# List of covariates
+covariates <- c("parent_EducHH", "parent_Employ", "student_Gen", "student_Race", "parent_Vote")  
+
+# Select only relevant columns
+ypsps_subset <- ypsps %>%
+  dplyr::select(college, all_of(covariates), student_ppnscal)
+
+# Estimate propensity scores using logistic regression
+ps_model <- glm(college ~ ., data = ypsps_subset %>% select(-student_ppnscal), family = binomial())
+
+# Predict propensity scores
+ypsps_subset$p_score <- predict(ps_model, type = "response")
+
 # Plot the balance for the top 10 covariates
 
+# exclude treatment & outcome variables
+covariates <- setdiff(names(ypsps_subset), c("college", "student_ppnscal", "p_score"))
+
+# Create a table
+table <- CreateTableOne(vars = covariates, 
+                        strata = "college", 
+                        data = ypsps_subset, 
+                        test = FALSE)
+
+# Extract SMD values
+smd_values <- print(table, smd = TRUE) %>% as.data.frame()
+
+smd_values$SMD <- as.numeric(trimws(smd_values$SMD))
+
+smd_values <- smd_values %>% filter(!is.na(SMD))
+
+covariates_with_balance <- sum(smd_values$SMD <= 0.1, na.rm = TRUE)
+
+total_covariates <- nrow(smd_values)
+
+prop_balance <- covariates_with_balance / total_covariates
+
+
+cat("Total number of covariates:", total_covariates, "\n")
+cat("Number of covariates meeting the balance threshold (SMD ≤ 0.1):", covariates_with_balance, "\n")
+cat("Proportion of covariates meeting the balance threshold:", round(prop_balance, 3), "\n")
+
+
+# Select top 10 most imbalanced covariates (highest SMD)
+# 4/1/25: I've asked for clarity, but I'm not sure what the variables are for now. Leaving these ones here for now, but I'll refine if I get more information before I have to leave
+top_10_smd <- smd_values %>%
+  arrange(desc(SMD)) %>%
+  slice(1:10) %>%
+  mutate(Covariate = rownames(.))
+
 # Report the overall balance and the proportion of covariates that meet the balance threshold
+ggplot(top_10_smd, aes(x = SMD, y = reorder(Covariate, SMD))) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_vline(xintercept = 0.1, color = "red", linetype = "dashed", size = 1.2) +
+  labs(title = "Covariate Balance Before Matching",
+       x = "Standardized Mean Difference",
+       y = "Covariate") +
+  theme_minimal()
 ```
 
 ## Simulations
@@ -193,10 +258,249 @@ Henderson/Chatfield argue that an improperly specified propensity score model ca
 \textbf{Note: There are lots of post-treatment covariates in this dataset (about 50!)! You need to be careful not to include these in the pre-treatment balancing. Many of you are probably used to selecting or dropping columns manually, or positionally. However, you may not always have a convenient arrangement of columns, nor is it fun to type out 50 different column names. Instead see if you can use dplyr 1.0.0 functions to programatically drop post-treatment variables (\href{https://www.tidyverse.org/blog/2020/03/dplyr-1-0-0-select-rename-relocate/}{here} is a useful tutorial).}
 
 ```{r}
-# Remove post-treatment covariates
+#cleaning
+ypsps_clean <- ypsps %>%
+#  mutate(ATT = NA, balanced_proportion = NA, mean_improvement = NA)  %>%
+  select(-contains("1973"), -contains("1982"))
 
-# Randomly select features
+colSums(is.na(ypsps_clean))
 
+# I think rows with missing values are messing me up bc matchit doens't accept missing values. I'm going to just drop those rows for now, might explore other solutions later on
+ypsps_clean <- na.omit(ypsps_clean)  
+glimpse(ypsps_clean)
+colSums(is.na(ypsps_clean))
+
+
+# Quick check for balance between treatment and control
+table(ypsps_clean$college)
+table(ypsps_clean$student_ppnscal)
+
+```
+
+
+```{r}
+#attempt 2
+run_simulation <- function(data, num_simulations = 1000) {
+  
+  results <- tibble( 
+    ATT = numeric(),
+    balanced_proportion = numeric(),
+    mean_improvement = numeric()
+  )
+  balance_plots <- list()
+  
+  for (i in 1:num_simulations) {
+    # Randomly select covariates (between 1 and 5 random covariates)
+    covariates <- sample(names(data)[!names(data) %in% c("college", "student_ppnscal")], 
+                         size = sample(1:5, 1))  # Random covariates excluding treatment and outcome
+    
+    # Build the propensity score model formula
+    formula <- as.formula(paste("college ~", paste(covariates, collapse = " + ")))
+    
+    # Fit the ps model. Using "full" method as per your reasoning
+    match_model <- matchit(formula, data = data, method = "full", distance = "logit", estimand = "ATT")
+    
+    # *** Debugging print -- check the summary of the match model
+    #print(summary(match_model)) 
+    
+    # Calculate ATT
+    att <- NA
+    if (!is.null(summary(match_model)$sum.matched)) {
+      att <- summary(match_model)$sum.matched["ATT"]
+    }
+
+    # Extract balance information from the matching model summary
+    smd_data <- summary(match_model)$covariate.balance
+    
+    # Debugging print *** -- cov balance
+    print(str(summary(match_model)$covariate.balance)) 
+    
+    # Debugging print *** -- check the balance data
+    # print(smd_data)  # Check if this is NULL or empty
+    
+    if (!is.null(smd_data) && nrow(smd_data) > 0) {
+      # Mark covariates with SMD <= 0.1 as balanced
+      smd <- smd_data %>% 
+        mutate(balanced = smd <= 0.1)  # SMD <= 0.1 considered balanced
+      
+      # Proportion of balanced covariates
+      balanced_proportion <- mean(smd$balanced, na.rm = TRUE)
+      
+      # Mean percent improvement in SMD
+      mean_improvement <- mean(smd$improvement, na.rm = TRUE)
+      
+      # Store results for this run
+      results <- results %>%
+        add_row(ATT = att, balanced_proportion = balanced_proportion, mean_improvement = mean_improvement)
+      
+      # Create covariate balance plot
+      balance_plot <- ggplot(smd, aes(x = covariate, y = smd)) +
+        geom_bar(stat = "identity", fill = ifelse(smd$smd <= 0.1, "blue", "red")) +
+        coord_flip() + 
+        theme_minimal() + 
+        labs(title = paste("Balance for Run", i), x = "Covariate", y = "SMD") +
+        theme(axis.text.y = element_text(size = 8))
+      
+      balance_plots[[i]] <- balance_plot
+    } else {
+      # If no valid balance data, record NA for ATT and balance stats
+      results <- results %>%
+        add_row(ATT = NA, balanced_proportion = NA, mean_improvement = NA)
+    }
+  }
+  
+  return(list(results = results, balance_plots = balance_plots))
+}
+
+# troubleshooting function with small sample
+test_data <- ypsps_clean %>% sample_n(100)  # Take a small random sample
+simulation_test <- run_simulation(test_data, num_simulations = 5)
+
+#glimpse(simulation_test)
+
+
+# Extract results -- sample
+simulation_results <- simulation_test$results
+#glimpse(simulation_results)
+
+
+```
+
+
+
+
+```{r}
+## function attempt 1
+run_simulation <- function(data, num_simulations = 1000) {
+  
+  results <- tibble( 
+    ATT = numeric(),
+    balanced_proportion = numeric(),
+    mean_improvement = numeric()
+    )
+  balance_plots <- list()
+  
+  for (i in 1:num_simulations) {
+    # Randomly select covariates (between 1 and 5 random covariates)
+    covariates <- sample(names(data)[!names(data) %in% c("college", "student_ppnscal")], 
+                  size = sample(1:5, 1))  # Random covariates excluding treatment and outcome
+    
+    # Build the propensity score model formula
+    formula <- as.formula(paste("college ~", paste(covariates, collapse = " + ")))
+    
+    # Fit the ps model. Was using "nearest" but it seems like since there's almost two treatment observations for every control, "full" would be better as a method, since it matches more than 1:1  
+    match_model <- matchit(formula, data = data, method = "full", distance = "logit", estimand = "ATT")
+   # debugging print -- don't run with full sim
+   # print(summary(match_model)) # low
+    
+    #debugging print -- don't run with full sim
+    #print(summary(match_model)$sum.matched)
+
+    # Calculate ATT
+    att <- summary(match_model)$sum.matched["ATT"]
+         } else {
+              att <- NA  # Set ATT to NA if not found
+         }
+    
+    # Extract balance information from the matching model summary
+    smd_data <- summary(match_model)$covariate.balance
+    #debugging print -- don't run with full sim
+    print(smd_data) #missing (NULL)
+    
+    # Check if smd_data is NULL or empty before processing
+    if (!is.null(smd_data) && nrow(smd_data) > 0) {
+      smd <- smd_data %>% 
+        mutate(balanced = smd <= 0.1)  # Mark covariates with SMD <= 0.1 as balanced
+      
+      # Proportion of balanced covariates
+      balanced_proportion <- mean(smd$balanced, na.rm = TRUE)
+      
+      # Mean percent improvement in SMD
+      mean_improvement <- mean(smd$improvement, na.rm = TRUE)
+      
+      # Store results for this run
+      results <- results %>%
+        add_row(ATT = att, balanced_proportion = balanced_proportion, mean_improvement = mean_improvement)
+      
+      # Create covariate balance plot
+      balance_plot <- ggplot(smd, aes(x = covariate, y = smd)) +
+        geom_bar(stat = "identity", fill = ifelse(smd <= 0.1, "blue", "red")) +
+        coord_flip() + 
+        theme_minimal() + 
+        labs(title = paste("Balance for Run", i), x = "Covariate", y = "SMD") +
+        theme(axis.text.y = element_text(size = 8))
+      
+      balance_plots[[i]] <- balance_plot
+    } else {
+      # If no valid balance data, record NA for ATT and balance stats
+     # results <- results %>%
+      #  add_row(ATT = NA, balanced_proportion = NA, mean_improvement = NA)
+    }
+  
+  
+  return(list(results = results, balance_plots = balance_plots))
+}
+
+
+
+```
+```{r}
+
+# troubleshooting function with small sample
+test_data <- ypsps_clean %>% sample_n(100)  # Take a small random sample
+simulation_test <- run_simulation(test_data, num_simulations = 5)
+
+glimpse(simulation_test)
+
+
+# Extract results -- sample
+simulation_results <- simulation_test$results
+glimpse(simulation_results)
+balance_plots <- simulation_test$balance_plots
+
+
+# Plotting: ATT vs Proportion of Covariates Balanced -- sample
+ggplot(simulation_results, aes(x = balanced_proportion, y = ATT)) +
+  geom_point(alpha = 0.2) +  # Transparency to reduce overplotting
+  labs(title = "ATT vs Proportion of Covariates Balanced", 
+       x = "Proportion of Covariates Balanced (SMD <= 0.1)", 
+       y = "Average Treatment Effect on the Treated (ATT)") +
+  theme_minimal()
+
+# Create random covariate balance plots using gridExtra (10 plots at a time)
+grid.arrange(grobs = balance_plots, ncol = 5)
+
+# Run the simulation with 10 iterations
+simulation_output <- run_simulation(ypsps_clean, num_simulations = 1000)
+glimpse(simulation_output)
+```
+
+
+```{r}
+## running function on full data
+
+
+
+#### full data
+# Extract results -- full data
+simulation_results <- simulation_output$results
+balance_plots <- simulation_output$balance_plots
+
+# Plotting: ATT vs Proportion of Covariates Balanced
+ggplot(simulation_results, aes(x = balanced_proportion, y = ATT)) +
+  geom_point(alpha = 0.2) +  # Transparency to reduce overplotting
+  labs(title = "ATT vs Proportion of Covariates Balanced", 
+       x = "Proportion of Covariates Balanced (SMD <= 0.1)", 
+       y = "Average Treatment Effect on the Treated (ATT)") +
+  theme_minimal()
+
+# Create random covariate balance plots using gridExtra (10 plots at a time)
+grid.arrange(grobs = balance_plots, ncol = 5)
+```
+
+
+
+```{r}
 # Simulate random selection of features 10k+ times
 
 # Fit p-score models and save ATTs, proportion of balanced covariates, and mean percent balance improvement
@@ -206,6 +510,8 @@ Henderson/Chatfield argue that an improperly specified propensity score model ca
 # 10 random covariate balance plots (hint try gridExtra)
 # Note: ggplot objects are finnicky so ask for help if you're struggling to automatically create them; consider using functions!
 ```
+
+
 
 ## Questions
 
