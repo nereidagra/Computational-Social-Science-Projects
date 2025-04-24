@@ -7,17 +7,23 @@ output: html_document
 ```{r}
 # Install and load packages 
 #if (!require("pacman")) install.packages("pacman")
+#devtools::install_github("susanathey/MCPanel")
+install.packages("C:/Users/MACKGS~1/AppData/Local/Temp/RtmpiszvSs/filef4a06b5d5e78/MCPanel_0.0.tar.gz", repos = NULL, type = "source")
 
 #devtools::install_github("ebenmichael/augsynth")
 
-# #pacman::p_load(# Tidyverse packages including dplyr and ggplot2 
-#                tidyverse,
-#                ggthemes,
-#                augsynth,
-#                gsynth)
+pacman::p_load(# Tidyverse packages including dplyr and ggplot2
+               tidyverse,
+               ggthemes,
+               augsynth,
+               gsynth)
+
 
 library(dplyr)
+library(augsynth)
 library(ggplot2)
+library(tidyr)
+library(MCPanel)
 
 # set seed
 set.seed(44)
@@ -99,7 +105,7 @@ ggplot(medicaid_expansion_to_2014, aes(x = year, y = uninsured_rate, group = Sta
 ```
 
 ```{r}
-##trying something else -- average across 2008-2014
+##trying something else -- highest by average across 2008-2014
 state_summary <- medicaid_expansion_to_2014 %>%
   group_by(State) %>%
   summarize(avg_uninsured_rate = mean(uninsured_rate, na.rm = TRUE)) %>%
@@ -108,6 +114,7 @@ state_summary <- medicaid_expansion_to_2014 %>%
 highest_state <- state_summary$State[1]
 lowest_state <- state_summary$State[nrow(state_summary)]
 
+#same viz, just highlighting those ones
 ggplot(medicaid_expansion_to_2014, aes(x = year, y = uninsured_rate, group = State)) +
   geom_line(aes(color = State %in% c(highest_state, lowest_state)), linewidth = 1) +
   scale_color_manual(values = c("gray", "red")) + # Highlight selected states in red
@@ -179,7 +186,7 @@ ggplot(medicaid_expansion_uninsured, aes(x = year, y = uninsured_total, group = 
 
 
 ```{r}
-# most uninsured Americans in 2020
+# most uninsured Americans in 2020. DC is empty, it isn't really the most
 
 medicaid_expansion_uninsured_2020 <- medicaid_expansion %>%
   mutate(uninsured_total = (uninsured_rate / 100) * population) %>%
@@ -205,27 +212,159 @@ ggplot(medicaid_expansion_uninsured_2020, aes(x = reorder(State, uninsured_total
 Do the following:
 
 - Choose a state that adopted the Medicaid expansion on January 1, 2014 and a state that did not. **Hint**: Do not pick Massachusetts as it passed a universal healthcare law in 2006, and also avoid picking a state that adopted the Medicaid expansion between 2014 and 2015.
-- Assess the parallel trends assumption for your choices using a plot. If you are not satisfied that the assumption has been met, pick another state and try again (but detail the states you tried).
 
 ```{r}
-# Parallel Trends plot
+#set of states that expanded on the date of interest
+expanded_on_dof <- medicaid_expansion %>%
+  filter(Date_Adopted == as.Date("2014-01-01")) %>%
+  distinct(State)
+
+#Somehow took forever just to figure out how to see them all at once
+# print(expanded_on_dof)
+# print(expanded_on_dof, n = 30)
+# view(expanded_on_dof)
+print(expanded_on_2014$State)
+```
+
+```{r}
+# set of states that didn't expand
+not_expanded <- medicaid_expansion %>%
+  filter(is.na(Date_Adopted)) %>%
+  distinct(State)
+
+print(not_expanded$State)
+```
+Initially I'm going to see if using Kansas (didn't expand) and Arkansas (expanded on 1/1/2014)
+
+- Assess the parallel trends assumption for your choices using a plot. If you are not satisfied that the assumption has been met, pick another state and try again (but detail the states you tried).
+
+Kansas and Arkansas are looking pretty good, especially between 2012 and 2013. Going to try a few more combos for fun
+
+```{r}
+# Parallel Trends plot: Arkansas and Kansas -- pretty good!
+# Just Kansas and Arkansas
+states_to_compare <- medicaid_expansion %>%
+  filter(State %in% c("Kansas", "Arkansas"),
+         year >= 2008, year < 2014)  # Pre-treatment years
+
+ggplot(states_to_compare, aes(x = year, y = uninsured_rate, color = State)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  labs(title = "Uninsured Rate: Kansas vs Arkansas (2008–2014)",
+       x = "Year",
+       y = "Uninsured Rate (%)",
+       color = "State") +
+  theme_minimal()
+
+
+```
+
+
+
+```{r}
+# Parallel Trends plot: California and Texas: definitely not, terrible choices
+states_to_compare <- medicaid_expansion %>%
+  filter(State %in% c("Texas", "California"),
+         year >= 2008, year < 2014)  # Pre-treatment years
+
+ggplot(states_to_compare, aes(x = year, y = uninsured_rate, color = State)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  labs(title = "Uninsured Rate: CA vs TX (2008–2014)",
+       x = "Year",
+       y = "Uninsured Rate (%)",
+       color = "State") +
+  theme_minimal()
+
+```
+```{r}
+# Parallel Trends plot: Ohio and Missouri: also fairly poor trend match
+states_to_compare <- medicaid_expansion %>%
+  filter(State %in% c("Missouri", "Ohio"),
+         year >= 2008, year < 2014)  # Pre-treatment years
+
+ggplot(states_to_compare, aes(x = year, y = uninsured_rate, color = State)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  labs(title = "Uninsured Rate: OH vs MS (2008–2014)",
+       x = "Year",
+       y = "Uninsured Rate (%)",
+       color = "State") +
+  theme_minimal()
+
 ```
 
 - Estimates a difference-in-differences estimate of the effect of the Medicaid expansion on the uninsured share of the population. You may follow the lab example where we estimate the differences in one pre-treatment and one post-treatment period, or take an average of the pre-treatment and post-treatment outcomes
 
+
+
 ```{r}
 # Difference-in-Differences estimation
+
+# DiD for: Kansas-Arkansas. trying the point in time/subtraction thing
+# ----------------------------------------------------------------
+# create a dataset for Kansas and Arkansas
+states_of_int <- 
+  medicaid_expansion %>%
+  filter(State %in% c("Kansas","Arkansas")) %>%
+  filter(between(year, 2012, 2015)) #I don't think I need this actually? Also -- using "between", is there a way to not include the boundaries (like in the filter year > 2014 that I was doing before? 
+  glimpse(states_of_int)
+
+# pre-treatment difference
+# ----------
+pre_diff <- 
+  states_of_int %>%
+  # filter out only the quarter we want
+  filter(year == 2012) %>%
+  # subset to select only vars we want
+  select(State, 
+         uninsured_rate) %>%
+  # make the data wide
+  pivot_wider(names_from = State, 
+              values_from = uninsured_rate) %>%
+  # subtract to make calculation
+  summarise(Kansas - Arkansas)
+  glimpse(pre_diff)
+  
+# post-treatment difference
+# ----------
+post_diff <- 
+  states_of_int %>%
+  # filter out only the quarter we want
+  filter(year == 2015) %>%
+  # subset to select only vars we want
+  select(State, 
+         uninsured_rate) %>%
+  # make the data wide
+  pivot_wider(names_from = State, 
+              values_from = uninsured_rate) %>%
+  # subtract to make calculation
+  summarise(Kansas - Arkansas)
+  glimpse(post_diff)
+
+# diff-in-diffs
+# ----------
+diff_in_diffs <- post_diff - pre_diff
+diff_in_diffs
+
+
 ```
+Looks like if this is true, the expansion resulted in a 3.6% decrease in the uninsured population between 2012 and 2015.
 
-
-## Discussion Questions
+## 1. Discussion Questions
 
 - Card/Krueger's original piece utilized the fact that towns on either side of the Delaware river are likely to be quite similar to one another in terms of demographics, economics, etc. Why is that intuition harder to replicate with this data?
-- **Answer**:
+- **Answer**: Card and Krueger compared places in NJ and PA, on either side of the Delaware River; the small populations and close geographies meant that demographics, economies, and culture, etc, were very similar. This helps with the parallel trends assumption, because you can more confidently say that any observed differences were due to the policy change only (in this case minimum wage), and not other factors. We, on the other hand, are comparing entire states -- larger, necessarily more diverse in terms of demographics, healthcare quality and availability, the economy, etc. Picking culturally similar states in the middle of the country helps but lots of things other than the expansion could actually be affecting the uninsured rates.
 
 - What are the strengths and weaknesses of using the parallel trends assumption in difference-in-differences estimates?
-- **Answer**:
+- **Answer**: 
 
+Strengths: 
+1. You can (attempt to) estimate causal effects without controlling for every possible confounder, since supposedly DiD controls for changes over time and automatically adjusts for differences between groups. 
+2. DiD is easy to implement and also to explain -- simple and intuitive. 
+
+Weakness: 
+I don't think there are actually any solid tests for the parallel trends assumption? At least in class we've only just assessed it visually. And that might feel like you're on kind of shaky ground because if you're off, and the groups in question were actually not on the same trajectories before the treatment, your conclusions are pretty much useless. 
 
 # Synthetic Control
 
@@ -238,24 +377,368 @@ Do the following:
 - Choose a state that adopted the Medicaid expansion after January 1, 2014. Construct a non-augmented synthetic control and plot the results (both pre-treatment fit and post-treatment differences). Also report the average ATT and L2 imbalance.
 
 ```{r}
-# non-augmented synthetic control
+#looking at my options
+late_expanders <- medicaid_expansion %>%
+  filter(Date_Adopted > as.Date("2015-01-01")) %>%
+  distinct(State, Date_Adopted)
+
+print(late_expanders)
+
+#want to pick a state with an average population, Louisiana is a good bet
+medicaid_expansion_late <- medicaid_expansion %>%
+  filter(State %in% late_expanders$State) %>% 
+  filter(year == 2016)
+
+print(medicaid_expansion_late)
+
 ```
+
+-Construct a non-augmented synthetic control and plot the results (both pre-treatment fit and post-treatment differences). Also report the average ATT and L2 imbalance.
+
+```{r}
+# non-augmented synthetic control using Louisiana
+
+#define a treatment var. Uisng 2017 as first true post-treatment year since the adoption was mid-2016
+medicaid_expansion <- medicaid_expansion %>%
+  mutate(treatment = if_else(State == "Louisiana" & year >= 2017, 1, 0))
+
+# Run non-augmented synthetic control for Louisiana
+syn_louisiana <- augsynth(
+  uninsured_rate ~ treatment,   # outcome ~ treatment indicator
+  unit = State,                 # unit of analysis
+  time = year,                  # time variable
+  t_int = 2017,
+  data = medicaid_expansion,   # your dataset
+  unit_name = "Louisiana",     # treated unit
+  progfunc = "None",           # no augmentation (use "ridge" for augmented)
+  scm = TRUE                   # use synthetic control method
+)
+
+# # View summary of results
+
+# this is not working not sure why
+# summary(syn_louisiana)
+# 
+# 
+# att <- summary(syn_louisiana)$att.avg
+# imbalance <- summary(syn_louisiana)$imbalance
+# 
+# print(att)
+# print(imbalance)
+
+syn_summary <- summary(syn_louisiana)
+glimpse(syn_summary)
+
+att <- syn_summary$average_att$Estimate
+pval <- syn_summary$average_att$p_val
+imbalance <- syn_summary$l2_imbalance
+improvement <- 1 - (syn_summary$scaled_l2_imbalance / syn_summary$l2_imbalance)
+
+print(att)
+print(pval)
+print(imbalance)
+print(improvement)
+```
+ATT of -0.02567633 shows that Louisiana's uninsured rate dropped by 2.57 more percentage points on average than the synthetic control post-treatment.
+
+the p-value of 0.284 isn't great, a p value of under 0.05 is a normal level of significance so this is pretty large. 
+
+Imbalance:	0.0052, low imbalance, I think this just means that the pre-treatment fit is good.
+
+Improvement: The internet says to test for this too.	It's -8.37%. I don't totally understand this to be honest, but I think negative is not good, because it means I could have just averaged all the other states instead of doing all this synthetic control modeling and it would have been better.  
+
+
+```{r}
+
+str(syn_louisiana) # what even is the data now
+head(syn_louisiana)
+
+# Extract time and outcome values
+#time_vals <- as.integer(colnames(syn_louisiana$data$X))  # Tried to get the years from column names
+#needed to hard code it bc it was too hard to extract the years
+time_vals <- 2008:2020 
+#time_vals <- syn_louisiana$data$synth_data$Y0plot[,1]  # Assuming time is the same for all units?
+actual_vals <- syn_louisiana$data$synth_data$Y1plot[,1]  # treated LA outcome
+synthetic_vals <- syn_louisiana$data$synth_data$Y0plot[,1]  # synthetic control outcome
+
+
+# Check the extracted values
+head(time_vals)
+head(actual_vals)
+print(synthetic_vals)
+
+# Create a data frame with columns for Year, Actual, and Synthetic
+outcome_df <- data.frame(
+  Year = time_vals,
+  Actual = actual_vals,
+  Synthetic = synthetic_vals
+)
+
+
+#is this working
+head(outcome_df)
+
+```
+
+```{r}
+summary(outcome_df)
+```
+
+```{r}
+#plots
+
+#pre-treatment plot
+
+
+# Convert to long format for ggplot
+# Make sure the reshaping process is working correctly
+outcome_long <- pivot_longer(outcome_df, 
+                             cols = c("Actual", "Synthetic"), 
+                             names_to = "Type", 
+                             values_to = "UninsuredRate")
+
+# Check the reshaped data frame
+head(outcome_long)
+
+# Check
+head(outcome_long)
+```
+
+```{r}
+# Create the plot
+#pre-treatment
+
+ggplot(outcome_long, aes(x = Year, y = UninsuredRate, color = Type, linetype = Type)) +
+  geom_line(size = 1.2) +
+  geom_vline(xintercept = syn_louisiana$t_int, linetype = "dashed", color = "gray40") +  # Treatment time
+  labs(
+    title = "Actual vs Synthetic Uninsured Rate in Louisiana",
+    x = "Year",
+    y = "Uninsured Rate",
+    color = "Legend",
+    linetype = "Legend"
+  ) +
+  theme_minimal()
+
+
+```
+Ok so this plot should be showing a line for actual treated unit outcome (red) (e.g., LA's uninsured rate) and one for the synthetic control estimate (blue, dotted). They are pretty close right before treatment and then after treatment they diverge, more specifically, the "actual" line dips, implying that maybe the treatment works to reduce uninsured rates. 
+
+```{r}
+#post-treatment
+library(ggplot2)
+
+# Extract ATT time-series
+att_df <- summary(syn_louisiana)$att
+
+ggplot(att_df, aes(x = Time, y = Estimate)) +
+  geom_line(color = "darkred", size = 1.2) +
+  geom_vline(xintercept = summary(syn_louisiana)$t_int, linetype = "dashed", color = "gray40") +
+  geom_hline(yintercept = 0, linetype = "solid", color = "black") +
+  labs(
+    title = "Post-Treatment Differences: Louisiana vs Synthetic Control",
+    subtitle = "Estimated ATT (Treated - Synthetic) Over Time",
+    x = "Year",
+    y = "ATT (Uninsured Rate Difference)"
+  ) +
+  theme_minimal()
+
+```
+This plot is supposed to show the difference between the actual and synthetic outcomes. Makes sense that the difference should be about zero until the point of treatment, which we've classified at 2017. 
 
 - Re-run the same analysis but this time use an augmentation (default choices are Ridge, Matrix Completion, and GSynth). Create the same plot and report the average ATT and L2 imbalance.
 
 ```{r}
+summary(medicaid_expansion$uninsured_rate)
+summary(medicaid_expansion$treatment)
+summary(medicaid_expansion$population)
+
+medicaid_expansion <- medicaid_expansion %>% 
+  filter(!is.na(uninsured_rate), !is.na(treatment), !is.na(population))
+```
+
+
+```{r}
 # augmented synthetic control
+
+#define a treatment var. Uisng 2017 as first true post-treatment year since the adoption was mid-2016
+medicaid_expansion <- medicaid_expansion %>%
+  mutate(treatment = if_else(State == "Louisiana" & year >= 2017, 1, 0))
+
+# Run non-augmented synthetic control for Louisiana
+syn_louisiana <- augsynth(
+  uninsured_rate ~ treatment,   # outcome ~ treatment indicator
+  unit = State,                 # unit of analysis
+  time = year,                  # time variable
+  t_int = 2017,
+  data = medicaid_expansion,   # your dataset
+  unit_name = "Louisiana",     # treated unit
+  progfunc = "MCP",           # using matrix completion bc the internet says ridge won't do anything without covariates and we kind of don't have those, other than population I guess. I'll try adding population as a covariate
+  scm = TRUE                   # use synthetic control method
+)
+
+
+#Ok I tried running the ridge a bunch of ways and it's still identical to non-augmented. going to try "MCP" above, if it's still identical I'm giving up
+# syn_louisiana <- augsynth(
+#   form = uninsured_rate ~ treatment | population,  # outcome ~ treatment + covariate
+#   unit = State,                                    # unit identifier
+#   time = year,                                     # time variable
+#   t_int = 2017,                                    # first treated period
+#   data = medicaid_expansion,                       # data
+#   unit_name = "Louisiana",                         # treated unit
+#   progfunc = "ridge",                              # ridge regression for augmentation
+#   scm = TRUE                                       # use synthetic control method
+# )  
+
+
+
+# # View summary of results
+
+# this is not working not sure why
+# summary(syn_louisiana)
+# 
+# 
+# att <- summary(syn_louisiana)$att.avg
+# imbalance <- summary(syn_louisiana)$imbalance
+# 
+# print(att)
+# print(imbalance)
+
+syn_summary <- summary(syn_louisiana)
+glimpse(syn_summary)
+
+att <- syn_summary$average_att$Estimate
+pval <- syn_summary$average_att$p_val
+imbalance <- syn_summary$l2_imbalance
+improvement <- 1 - (syn_summary$scaled_l2_imbalance / syn_summary$l2_imbalance)
+
+print(att)
+print(pval)
+print(imbalance)
+print(improvement)
+
+```
+```{r}
+str(syn_louisiana) # ridge data 
+head(syn_louisiana)
+
+# Extract time and outcome values
+#time_vals <- as.integer(colnames(syn_louisiana$data$X))  # Tried to get the years from column names
+#needed to hard code it bc it was too hard to extract the years
+time_vals <- 2008:2020 
+#time_vals <- syn_louisiana$data$synth_data$Y0plot[,1]  # Assuming time is the same for all units?
+actual_vals <- syn_louisiana$data$synth_data$Y1plot[,1]  # treated LA outcome
+synthetic_vals <- syn_louisiana$data$synth_data$Y0plot[,1]  # synthetic control outcome
+
+
+# Check the extracted values
+head(time_vals)
+head(actual_vals)
+print(synthetic_vals)
+
+# Create a data frame with columns for Year, Actual, and Synthetic
+outcome_df <- data.frame(
+  Year = time_vals,
+  Actual = actual_vals,
+  Synthetic = synthetic_vals
+)
+
+
+#is this working
+head(outcome_df)
+
+
+# Convert to long format for ggplot
+# Make sure the reshaping process is working correctly
+outcome_long_ridge <- pivot_longer(outcome_df, 
+                             cols = c("Actual", "Synthetic"), 
+                             names_to = "Type", 
+                             values_to = "UninsuredRate")
+
+# Check the reshaped data frame
+view(outcome_long_ridge)
+view(outcome_long)
+
+
+```
+
+
+```{r}
+# Create the plot
+#pre-treatment
+
+ggplot(outcome_long, aes(x = Year, y = UninsuredRate, color = Type, linetype = Type)) +
+  geom_line(size = 1.2) +
+  geom_vline(xintercept = syn_louisiana$t_int, linetype = "dashed", color = "gray40") +  # Treatment time
+  labs(
+    title = "Actual vs Synthetic Uninsured Rate in Louisiana",
+    x = "Year",
+    y = "Uninsured Rate",
+    color = "Legend",
+    linetype = "Legend"
+  ) +
+  theme_minimal()
+
+
+```
+
+```{r}
+# Extract ATT time-series
+att_df <- summary(syn_louisiana)$att
+
+ggplot(att_df, aes(x = Time, y = Estimate)) +
+  geom_line(color = "darkred", size = 1.2) +
+  geom_vline(xintercept = summary(syn_louisiana)$t_int, linetype = "dashed", color = "gray40") +
+  geom_hline(yintercept = 0, linetype = "solid", color = "black") +
+  labs(
+    title = "Post-Treatment Differences: Louisiana vs Synthetic Control",
+    subtitle = "Estimated ATT (Treated - Synthetic) Over Time",
+    x = "Year",
+    y = "ATT (Uninsured Rate Difference)"
+  ) +
+  theme_minimal()
 ```
 
 - Plot barplots to visualize the weights of the donors.
 
+
 ```{r}
 # barplots of weights
+library(tibble)
+
+summary(syn_louisiana)
+
+
+ print(names(donor_weights))
+ print(coef(syn_louisiana)$weights)
+ print(syn_louisiana$weights)
+ 
+ 
+ weights_df <- as.data.frame(syn_louisiana$weights) %>%
+  rownames_to_column(var = "State") %>%
+  rename(Weight = V1) %>%
+  filter(abs(Weight) > 1e-5)
+ glimpse(weights_df)
+
+
+
+ggplot(weights_df, aes(x = reorder(State, Weight), y = Weight)) +
+  geom_bar(stat = "identity", fill = "dodgerblue") +
+  coord_flip() +
+  labs(
+    title = "Donor Weights for Synthetic Louisiana",
+    x = "Donor State",
+    y = "Weight"
+  ) +
+  theme_minimal()
+
 ```
 
 **HINT**: Is there any preprocessing you need to do before you allow the program to automatically find weights for donor states?
 
-## Discussion Questions
+I needed to check for NAs. Should I have standardized? I don't know. I didn't end up using any covariates, so I guess that didn't really matter. I had to create a treatment variable. Not sure what else I was supposed to do. 
+
+## 2. Discussion Questions
 
 
 - What are the advantages and disadvantages of synthetic control compared to difference-in-differences estimators?
@@ -274,6 +757,8 @@ Do the following:
 
 ```{r}
 # multisynth model states
+
+
 ```
 
 - Estimate a multisynth model using time cohorts. For the purpose of this exercise, you can simplify the treatment time so that states that adopted Medicaid expansion within the same year (i.e. all states that adopted epxansion in 2016) count for the same cohort. Plot the treatment effects for these time cohorts.
@@ -282,7 +767,7 @@ Do the following:
 # multisynth model time cohorts
 ```
 
-## Discussion Questions
+## 3. Discussion Questions
 
 - One feature of Medicaid is that it is jointly administered by the federal government and the states, and states have some flexibility in how they implement Medicaid. For example, during the Trump administration, several states applied for waivers where they could add work requirements to the eligibility standards (i.e. an individual needed to work for 80 hours/month to qualify for Medicaid). Given these differences, do you see evidence for the idea that different states had different treatment effect sizes?
 - **Answer**: 
@@ -290,7 +775,7 @@ Do the following:
 - Do you see evidence for the idea that early adopters of Medicaid expansion enjoyed a larger decrease in the uninsured population?
 - **Answer**: 
 
-# General Discussion Questions
+# 4. General Discussion Questions
 
 - Why are DiD and  synthetic control estimates well suited to studies of aggregated units like cities, states, countries, etc?
 - **Answer**:
