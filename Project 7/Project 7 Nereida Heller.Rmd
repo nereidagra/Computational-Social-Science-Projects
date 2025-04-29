@@ -12,6 +12,7 @@ install.packages("C:/Users/MACKGS~1/AppData/Local/Temp/RtmpiszvSs/filef4a06b5d5e
 
 #devtools::install_github("ebenmichael/augsynth")
 
+
 pacman::p_load(# Tidyverse packages including dplyr and ggplot2
                tidyverse,
                ggthemes,
@@ -24,6 +25,10 @@ library(augsynth)
 library(ggplot2)
 library(tidyr)
 library(MCPanel)
+library(lubridate)
+
+library(knitr)
+
 
 # set seed
 set.seed(44)
@@ -395,8 +400,10 @@ print(medicaid_expansion_late)
 
 -Construct a non-augmented synthetic control and plot the results (both pre-treatment fit and post-treatment differences). Also report the average ATT and L2 imbalance.
 
-```{r}
+```{r, warning=FALSE}
 # non-augmented synthetic control using Louisiana
+
+
 
 #define a treatment var. Uisng 2017 as first true post-treatment year since the adoption was mid-2016
 medicaid_expansion <- medicaid_expansion %>%
@@ -558,7 +565,7 @@ medicaid_expansion <- medicaid_expansion %>%
 ```
 
 
-```{r}
+```{r, warning=FALSE}
 # augmented synthetic control
 
 #define a treatment var. Uisng 2017 as first true post-treatment year since the adoption was mid-2016
@@ -742,10 +749,10 @@ I needed to check for NAs. Should I have standardized? I don't know. I didn't en
 
 
 - What are the advantages and disadvantages of synthetic control compared to difference-in-differences estimators?
-- **Answer**: 
+- **Answer** They are kind of similar, but DiD is easier to explain and less computationally expensive than synthetic control (SC). DiD depends so heavily on the parallel trends assumption, so SC is perhaps more robust in certain cases. SC and DiD are both pretty easy to convey in plots, but maybe SC is a little bit easier to understand visually? In general DiD is simpler, faster, and easier but also requires strong assumptions. 
 
 - One of the benefits of synthetic control is that the weights are bounded between [0,1] and the weights must sum to 1. Augmentation might relax this assumption by allowing for negative weights. Does this create an interpretation problem, and how should we balance this consideration against the improvements augmentation offers in terms of imbalance in the pre-treatment period?
-- **Answer**:
+- **Answer**: Allowing negative weights definitely causes a loss of clear interpretation. The balance has got to be case-specific, I think -- it’s going to always be a tradeoff between better fit (and therefore better causal estimates) versus a less intuitive interpretation. So it depends what's more important for the study at hand -- easily explainable results, or minimized bias. 
 
 # Staggered Adoption Synthetic Control
 
@@ -758,6 +765,217 @@ Do the following:
 ```{r}
 # multisynth model states
 
+#starting fresh with the data 663 
+medicaid_expansion <- read_csv('./data/medicaid_expansion.csv')
+glimpse(medicaid_expansion)
+
+
+#new treatment var
+medicaid_expansion$expansion_year <- year(medicaid_expansion$Date_Adopted)
+medicaid_expansion <- medicaid_expansion %>%
+  mutate(treatment = if_else(year >= expansion_year, 1, 0))
+medicaid_expansion$treatment <- ifelse(is.na(medicaid_expansion$treatment), 0, medicaid_expansion$treatment)
+glimpse(medicaid_expansion)
+medicaid_expansion <- medicaid_expansion %>%
+  mutate(treatment = replace_na(treatment, 0))
+
+#debugging. this is not working 
+medicaid_expansion <- medicaid_expansion %>%
+  filter(!is.na(State), !is.na(treatment))
+glimpse(medicaid_expansion)
+
+#is it NAs? var formats??
+medicaid_expansion$State <- as.factor(medicaid_expansion$State)
+medicaid_expansion$year <- as.numeric(medicaid_expansion$year)
+medicaid_expansion$expansion_year <- as.numeric(medicaid_expansion$expansion_year)
+sum(is.na(medicaid_expansion$State))  
+sum(is.na(medicaid_expansion$treatment)) 
+table(medicaid_expansion$treatment) 
+medicaid_expansion %>%
+  filter(is.na(State)) %>%
+  nrow()
+medicaid_expansion %>%
+  group_by(State) %>%
+  summarise(ever_treated = any(treatment == 1)) %>%
+  count(ever_treated)
+sum(is.na(medicaid_expansion$uninsured_rate))
+str(medicaid_expansion)
+table(medicaid_expansion$treatment, useNA = "always")
+
+#the data appears to make sense....
+medicaid_expansion %>%
+  group_by(State) %>%
+  summarise(min_year = min(year), max_year = max(year)) %>%
+  arrange(min_year)
+
+#the data appears to make sense...
+ggplot(medicaid_expansion, aes(x = year, y = reorder(State, year), color = factor(treatment))) +
+  geom_point() +
+  labs(color = "Treatment", y = "State", x = "Year") +
+  theme_minimal()
+
+##what is happening with trt_time
+# medicaid_expansion %>%
+#   group_by(State) %>%
+#   summarise(
+#     trt_time = ifelse(any(treatment == 1),
+#                       min(year[treatment == 1]),
+#                       Inf)  # Inf for control states
+#   ) %>%
+#   filter(is.na(trt_time))
+
+#All the control states have NA for trt_time, I don't know why
+
+# table(medicaid_expansion$treatment, useNA = "always")
+# length(unique(medicaid_expansion$State))
+
+
+##why is this still not working? Might have to drop some states
+good_states <- medicaid_expansion %>%
+  group_by(State) %>%
+  summarise(has_treatment_info = any(treatment == 1) | all(treatment == 0)) %>%
+  filter(has_treatment_info) %>%
+  pull(State)
+medicaid_expansion <- medicaid_expansion %>%
+  filter(State %in% good_states)
+
+table(medicaid_expansion$treatment, useNA = "always")
+length(unique(medicaid_expansion$State))
+
+##trt_time is the problem for sure, my control states are NA and not Inf, going to do this manually
+# trt_times <- medicaid_expansion %>%
+#   group_by(State) %>%
+#   summarise(
+#     trt_time = ifelse(any(treatment == 1),
+#                       min(year[treatment == 1]),
+#                       Inf)
+#   )
+
+# medicaid_expansion <- medicaid_expansion %>%
+#   left_join(trt_times, by = "State")
+
+table(medicaid_expansion$trt_time, useNA = "always")
+
+# medicaid_expansion <- medicaid_expansion %>%
+#   mutate(trt_time = replace_na(trt_time, Inf)) 
+
+summary(medicaid_expansion$trt_time)
+table(medicaid_expansion$State)
+
+#is expansion_year the problem?
+medicaid_expansion %>% select(State, year, expansion_year) %>% head(10)
+
+expansion_info <- medicaid_expansion %>%
+  group_by(State) %>%
+  summarize(expansion_year = unique(na.omit(expansion_year))[1], .groups = "drop")
+
+medicaid_expansion <- medicaid_expansion %>%
+  left_join(expansion_info, by = "State")
+
+glimpse(medicaid_expansion)
+
+class(trt_time)
+str(medicaid_expansion)
+
+
+```
+
+```{r}
+# Trying a smaller subset
+
+# 
+# subset_data %>%
+#   group_by(State) %>%
+#   summarise(
+#     min_year = min(year),
+#     max_year = max(year),
+#     first_treatment_year = min(year[treatment == 1], na.rm = TRUE),
+#     trt_time = unique(trt_time)  # See the trt_time values
+#   )
+# 
+# subset_data <- medicaid_expansion %>% filter(State == "Louisiana")  # Replace with one state
+
+
+##I've tried these models every way I can think of and I'm getting the same error.
+# 
+# multi_synth_model <- multisynth(
+#   outcome = "uninsured_rate",
+#   form = as.formula("uninsured_rate ~ 1"),
+#   unit = "State",
+#   time = "year",
+#   treatment = "treatment",
+#   t_int = 2017,
+#   data = subset_data,
+#   scm = TRUE,
+#   progfunc = "none"
+# )
+# 
+# multi_syn_model <- multisynth(uninsured_rate ~ treatment, 
+#                         State,                        # unit
+#                         year,                         # time
+#                         subset_data,                   # data
+#                         trt_time = "expansion_year"
+#                         #n_leads = 10 #for staggered adoption
+#                         ) 
+```
+
+```{r}
+
+#more attempts
+# 
+# multi_synth_model <- multisynth(
+#   outcome = "uninsured_rate",
+#   form = as.formula("uninsured_rate ~ 1"),
+#   unit = "State",
+#   time = "year",
+#   treatment = "treatment",
+#   t_int = 2017,
+#   data = medicaid_expansion,
+#   scm = TRUE,
+#   progfunc = "none"
+# )
+# 
+# multi_syn_model <- multisynth(
+#   uninsured_rate ~ treatment,             # Outcome variable and treatment formula
+#   unit = "State",                          # Unit of analysis
+#   time = "year",                           # Time variable
+#   treatment = "treatment",                 # Treatment indicator (just to be explicit)
+#   data = medicaid_expansion,               # Cleaned dataset
+#   n_leads = 7                              # For staggered adoption
+# )
+# 
+# 
+# multi_syn_model <- multisynth(
+#   form = uninsured_rate ~ treatment,  # Outcome and treatment formula
+#   unit = State,                     # Unit column
+#   time = year,                      # Time column
+#   data = medicaid_expansion,          # Dataset
+#   n_leads = 7                         # Number of post-treatment periods
+# )
+```
+
+```{r}
+
+##Ok I was using quotes and I shouldn't have been. Oy
+
+# medicaid_expansion <- medicaid_expansion %>%
+#   mutate(treatment = ifelse(!is.na(expansion_year) & year >= expansion_year, 1, 0))
+# view(medicaid_expansion)
+
+# Now run multisynth
+ms_result <- multisynth(
+  uninsured_rate ~ treatment, # Outcome ~ treatment
+  unit = State,               # Unit identifier
+  time = year,                # Time variable
+  data = medicaid_expansion   # Dataset
+)
+
+# summary of results
+summary(ms_result)
+
+# Plot results
+plot(ms_result)
+
 
 ```
 
@@ -765,7 +983,44 @@ Do the following:
 
 ```{r}
 # multisynth model time cohorts
+
+# Run multisynth model
+multi_syn_model <- multisynth(uninsured_rate ~ treatment, 
+                        State,                        # unit
+                        year,                         # time
+                        medicaid_expansion,            # data
+                        n_leads = 7,                    #for staggered adoption
+                        time_cohort = TRUE
+                        ) 
+
+# summary of results
+summary(ms_result)
+
+# Plot results
+plot(ms_result)
+
 ```
+
+```{r}
+##Repeating with just a subset, as requested
+states_of_interest <- c("California", "New York", "Texas", "Florida", "Ohio")
+
+subset_data <- medicaid_expansion %>%
+  filter(State %in% states_of_interest)
+
+# Run multisynth on subset
+subset_ms <- multisynth(
+  uninsured_rate ~ treatment,
+  unit = State,
+  time = year,
+  data = subset_data
+)
+
+# Plot subset results
+plot(subset_ms)
+
+```
+
 
 ## 3. Discussion Questions
 
@@ -778,7 +1033,7 @@ Do the following:
 # 4. General Discussion Questions
 
 - Why are DiD and  synthetic control estimates well suited to studies of aggregated units like cities, states, countries, etc?
-- **Answer**:
+- **Answer**: DiD and SC are good for aggregated units like states because they work well with small numbers of treated units, observational settings (where policies aren't randomly assigned), and instances in which longitudinal data is available. These kinds of units also have abrupt policy changes (like the Medicaid expansion!) which works well for DiD and SC. And these methods use untreated units as controls, so they can take construct counter-factuals from the kind of data typically available at state/county/etc levels.
 
 - What role does selection into treatment play in DiD/synthetic control versus regression discontinuity? When would we want to use either method?
-- **Answer**:
+- **Answer**: In DiD and SC, treatment isn’t random — we just assume that treated and control groups would’ve kept following similar trends if there was no treatment. If that assumption is false, the results can be biased. In regression discontinuity (RD), treatment depends on hitting a cutoff, so around that cutoff, it’s almost like random assignment. We should use DiD or SC when there are big treatment units (like states) and good pre-treatment trend data, and RD when there's some kind of more or less clear rule that dictates who gets treated.
