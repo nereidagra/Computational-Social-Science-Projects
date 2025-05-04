@@ -22,6 +22,9 @@ pacman::p_load(
 library(xgboost)
 library(readr)
 library(caret)
+library(ggdag)
+library(dplyr)
+library(ggplot2)
 
 
 #Keeping original code in case you need to run it, Kasey
@@ -169,6 +172,8 @@ validation <-
 # confusion matrix
 # table(Predicted = validation$pred, Actual = validation$obs)
 # confusionMatrix(factor(validation$pred), factor(validation$obs))
+print(caret::confusionMatrix(as.factor(validation$pred),
+                       as.factor(validation$obs)))
 
 #caret
 cm <- caret::confusionMatrix(as.factor(validation$pred),
@@ -218,8 +223,64 @@ Using ggdag and daggity, draw a directed acylcic graph (DAG) that describes the 
 
 ```{r}
 # DAG for TMLE
-```
+blood_pressure_dag <- dagify(
+  # Outcome
+  mortality ~ blood_pressure_medication + blood_pressure + chol + bmi + age + sex_at_birth,
+  
+  # Treatment assignment
+  blood_pressure_medication ~ blood_pressure + age + sex_at_birth + simplified_race + college_educ + income_thousands,
+  
+  # Other relationships
+  blood_pressure ~ age + bmi + simplified_race + sex_at_birth + income_thousands,
+  chol ~ age + bmi + simplified_race + sex_at_birth + income_thousands,
+  bmi ~ simplified_race + income_thousands + college_educ,
+  income_thousands ~ college_educ + simplified_race + age,
+  college_educ ~ simplified_race + age,
+  
+  # Exposure and outcome
+  exposure = "blood_pressure_medication",
+  outcome = "mortality",
+  
+  # Variable labels
+  labels = c(
+    "mortality" = "Mortality",
+    "blood_pressure_medication" = "BP Meds",
+    "blood_pressure" = "Blood Pressure",
+    "chol" = "Cholesterol",
+    "bmi" = "BMI",
+    "age" = "Age",
+    "sex_at_birth" = "Sex",
+    "simplified_race" = "Race",
+    "college_educ" = "College Ed",
+    "income_thousands" = "Income (thou)"
+  )
+)
 
+# Plot 
+ggdag_status(blood_pressure_dag, 
+             use_labels = "label", 
+             text = FALSE,
+             stylized = TRUE) +
+  theme_dag() +
+  scale_color_manual(values = c("exposure" = "#0073C2", 
+                               "outcome" = "#CD534C",
+                               "latent" = "#grey80")) +
+  guides(color = "none") +  # Remove the legend
+  theme(plot.title = element_text(hjust = 0.5)) +
+  ggtitle("DAG for Blood Pressure Medication and Mortality")
+
+
+```
+```{r}
+# # Identify adjustment sets
+# adjustmentSets <- ggdag_adjustment_set(blood_pressure_dag)
+# print(adjustmentSets)
+# 
+# # Alternative view showing minimal adjustment set paths
+# ggdag_paths(blood_pressure_dag) +
+#   theme_dag() +
+#   ggtitle("Causal Pathways in Blood Pressure Medication DAG")
+```
 ## TMLE Estimation
 
 Use the `tmle` package to estimate a model for the effect of blood pressure medication on the probability of mortality. Do the following:
