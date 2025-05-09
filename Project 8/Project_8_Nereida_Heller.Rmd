@@ -3,7 +3,8 @@ title: "Project 8 Nereida Heller"
 output: pdf_document
 ---
 
-```{r}
+```{r, warning=FALSE}
+#1
 # Add to this package list for additional SL algorithms
 pacman::p_load(
   tidyverse,
@@ -21,16 +22,20 @@ pacman::p_load(
 
 library(xgboost)
 library(readr)
-library(caret)
-library(ggdag)
 library(dplyr)
 library(ggplot2)
+library(data.table)
+library(ggplot2)
 
+# install.packages('tinytex')
+# tinytex::install_tinytex()
 
 #Keeping original code in case you need to run it, Kasey
 #heart_disease <- read_csv(here('heart_disease_tmle.csv'))
 heart_disease <- read_csv(here("Project 8", "heart_disease_tmle.csv"))
 
+head(heart_disease)
+glimpse(heart_disease)
 ```
 
 # Introduction
@@ -75,7 +80,7 @@ Fit a SuperLearner model to estimate the probability of someone dying from compl
 \end{enumerate}
 
 ```{r}
-
+#2
 # Subsetting to just necessary variables
 heart_disease_SL <- heart_disease %>% select(-ends_with("_2"))
 #glimpse(heart_disease_SL)
@@ -128,6 +133,7 @@ x_test <-
 # multiple models
 ## Train SuperLearner
 # ----------
+#3
 sl = SuperLearner(Y = y_train,
                   X = x_train,
                   family = binomial(),
@@ -139,6 +145,7 @@ sl = SuperLearner(Y = y_train,
 ```
 
 ```{r}
+#4
 ## Risk and Coefficient of each model
 sl
 
@@ -146,6 +153,7 @@ sl
 sl$cvRisk[which.min(sl$cvRisk)]
 ```
 ```{r}
+#5
 ## Confusion Matrix
 
 # predictions
@@ -175,7 +183,7 @@ validation <-
 print(caret::confusionMatrix(as.factor(validation$pred),
                        as.factor(validation$obs)))
 
-#caret
+#percentages
 cm <- caret::confusionMatrix(as.factor(validation$pred),
                        as.factor(validation$obs))
 cm_table <- cm$table
@@ -184,7 +192,7 @@ cm_percent_rounded <- round(cm_percent, 2)
 print(cm_percent_rounded)
 
 
-#base R
+#code with base R
 # cm_table <- table(Predicted = validation$pred, Actual = validation$obs)
 # 
 # cm_table <- cm$table
@@ -198,7 +206,18 @@ print(cm_percent_rounded)
 
 ```
 The random forest trainer "ranger" did the best. The model didn't perform all that well in the confusion matrix though.
+      Actual
+Pred  TN/FN
+Pred  FP/TP
 
+          Reference
+Prediction    0    1
+         0  410  236
+         1  808 1046
+
+Accuracy: 0.5824 = 58.2%
+Recall: TP/(TP+FN) = 1046/(1046+236) = 81.6%
+Precision: TP/(TP+FP) = 1046/(1046+808) = 56.4%
 
 ## Discussion Questions
 
@@ -222,6 +241,7 @@ TMLE requires estimating two models:
 Using ggdag and daggity, draw a directed acylcic graph (DAG) that describes the relationships between the outcome, treatment, and covariates/predictors. Note, if you think there are covariates that are not related to other variables in the dataset, note this by either including them as freestanding nodes or by omitting them and noting omissions in your discussion.
 
 ```{r}
+#6
 # DAG for TMLE
 blood_pressure_dag <- dagify(
   # Outcome
@@ -272,6 +292,7 @@ ggdag_status(blood_pressure_dag,
 
 ```
 ```{r}
+#7
 # # Identify adjustment sets
 # adjustmentSets <- ggdag_adjustment_set(blood_pressure_dag)
 # print(adjustmentSets)
@@ -291,11 +312,162 @@ Use the `tmle` package to estimate a model for the effect of blood pressure medi
     \item Report the average treatment effect and any other relevant statistics
 \end{enumerate}
 
+```{r}
+#8
+#troubleshooting
+str(heart_disease)
+
+heart_disease <- heart_disease %>%
+  mutate(
+    # Convert outcome to binary (0/1)
+    mortality = as.numeric(as.factor(mortality)) - 1,
+    # Convert treatment to binary
+    blood_pressure_medication = as.numeric(as.factor(blood_pressure_medication)) - 1,
+    # Convert categorical variables to factors
+    sex_at_birth = as.factor(sex_at_birth),
+    simplified_race = as.factor(simplified_race),
+    college_educ = as.factor(college_educ)
+  )
+
+str(heart_disease)
+```
+
+```{r}
+#9
+#library
+SL.library <- c(
+                 'SL.mean',    # Baseline 
+                 'SL.glm',     # Logistic regression
+                 'SL.glmnet',  # Lasso and ridge 
+                 'SL.ranger',  # Random forest 
+                 'SL.xgboost')
+
+#vars
+# Confounders
+W <- c("blood_pressure", "age", "sex_at_birth", "simplified_race", 
+       "college_educ", "income_thousands", "bmi", "chol")
+
+Y <- heart_disease$mortality                # Outcome
+A <- heart_disease$blood_pressure_medication # Treatment
+W_data <- heart_disease[, W]                # Confounders
+
+#Fit TMLE model
+tmle_result <- tmle(
+  Y = Y,                      # Outcome: mortality
+  A = A,                      # Treatment: blood pressure medication
+  W = W_data,                 # Confounders from DAG
+  Q.SL.library = SL.library,  # SuperLearner library for outcome model
+  g.SL.library = SL.library,  # SuperLearner library for propensity score model
+  family = "binomial",        # Binary outcome
+  verbose = TRUE              # Print detailed output
+)
+
+
+```
+
+
+```{r}
+#10
+#print results
+print(tmle_result)
+
+#extract
+ate <- tmle_result$estimates$ATE
+ate_ci_lower <- ate$CI[1]
+ate_ci_upper <- ate$CI[2]
+ate_pvalue <- ate$pvalue
+
+#quick check
+print(ate)
+print(ate_ci_lower)
+print(ate_ci_upper)
+print(ate_pvalue)
+
+#store results in df
+results_df <- data.frame(
+  Estimator = c("Initial", "TMLE"),
+  ATE = c(tmle_result$estimates$ATE$initial, tmle_result$estimates$ATE$psi),
+  SE = c(NA, tmle_result$estimates$ATE$se),
+  p_value = c(NA, tmle_result$estimates$ATE$pvalue),
+  CI_lower = c(NA, tmle_result$estimates$ATE$CI[1]),
+  CI_upper = c(NA, tmle_result$estimates$ATE$CI[2])
+)
+
+#print
+cat("\n\n--- TMLE Results Summary ---\n")
+cat("Average Treatment Effect (ATE): ", round(ate$psi, 4), "\n")
+cat("95% Confidence Interval: [", round(ate_ci_lower, 4), ", ", round(ate_ci_upper, 4), "]\n")
+cat("P-value: ", round(ate_pvalue, 4), "\n")
+```
+
+
+So this is telling us that taking blood pressure medication decreases mortality risk by 35.25 % on average.
+
+```{r}
+#11
+#trying to understand treatment distribution, it's pretty rare to get treatment, not actually sure after all of that if the models are dependable? (I don't think TMLE/LTMLE would make up for the fact that so many people have basically no shot at getting treatment, but maybe I'm misunderstanding something)
+
+#propensity score dist
+prop_scores <- tmle_result$g$g1W
+hist(prop_scores, main="Propensity Score Distribution", 
+     xlab="Probability of Treatment", col="lightblue", breaks=20)
+
+ps_min <- min(prop_scores)
+ps_max <- max(prop_scores)
+ps_imbalance <- data.frame(
+  Group = c("Treated", "Control"),
+  Count = c(sum(A == 1), sum(A == 0)),
+  Mean_PS = c(mean(prop_scores[A == 1]), mean(prop_scores[A == 0]))
+)
+
+cat("\n--- Propensity Score Diagnostics ---\n")
+cat("Minimum propensity score: ", round(ps_min, 4), "\n")
+cat("Maximum propensity score: ", round(ps_max, 4), "\n")
+print(ps_imbalance)
+```
+
+```{r}
+#12
+
+# By risk group
+heart_disease$prop_score <- prop_scores
+heart_disease$risk_group <- cut(heart_disease$prop_score, 
+                                breaks = quantile(heart_disease$prop_score, probs = seq(0, 1, 0.25)),
+                                labels = c("Low", "Medium-Low", "Medium-High", "High"),
+                                include.lowest = TRUE)
+# Mortality rates by treatment and risk group
+effect_by_risk <- heart_disease %>%
+  group_by(risk_group, blood_pressure_medication) %>%
+  summarize(
+    mortality_rate = mean(mortality),
+    count = n(),
+    .groups = "drop"
+  )
+
+
+
+# Treatment effect by risk group plot
+ggplot(effect_by_risk, aes(x = risk_group, y = mortality_rate, 
+                          fill = factor(blood_pressure_medication))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("#E69F00", "#56B4E9"),
+                   name = "Blood Pressure\nMedication",
+                   labels = c("No", "Yes")) +
+  labs(title = "Mortality Rate by Treatment Status and Risk Group",
+       x = "Propensity Score Risk Group",
+       y = "Mortality Rate") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+```
+
 ## Discussion Questions
 
 \begin{enumerate}
     \item What is a "double robust" estimator? Why does it provide a guarantee of consistency if either the outcome model or propensity score model is correctly specified? Or in other words, why does mispecifying one of the models not break the analysis? \textbf{Hint}: When answering this question, think about how your introductory statistics courses emphasized using theory to determine the correct outcome model, and in this course how we explored the benefits of matching.
 \end{enumerate}
+
+"Double robust" estimators are those that combine outcome and propensity score methods. They're helpful because they still work correctly if either your outcome model or propensity score model is wrong (but not both). When your outcome model is right but propensity scores are off, the outcome model gives you consistent estimates; When the propensity model is right but outcome model is wrong, the balancing between groups still allows the analysis to be unbiased. This gives you a kind of a safety net compared to methods that might fail completely of the model is misspecified. Traditional statistics would emphasize the outcome modeling piece; earlier with the matching material we looked at how to using matching methods to balance treated and control groups without requiring a correctly specified outcome model. Double robust estimators do both.
 
 # LTMLE Estimation
 
@@ -310,22 +482,845 @@ Update your causal diagram to incorporate this new information. \textbf{Note}: I
 \textbf{Hint}: Keep in mind that any of the variables that end in "\_2" are likely affected by both the previous covariates and the first treatment when drawing your DAG.
 
 ```{r}
-# DAG for TMLE
+#13
+# DAG for LTMLE
+
+blood_pressure_dag <- dagify(
+  # Outcome
+  mortality ~ blood_pressure_medication_2 + blood_pressure_2 + chol_2 + bmi_2 + age + sex_at_birth,
+  
+  # Treatment assignment - Time 2
+  blood_pressure_medication_2 ~ blood_pressure_2 + blood_pressure_medication + age + sex_at_birth + simplified_race + college_educ + income_thousands,
+  
+  # Time 2 measurements influenced by time 1 measurements
+  blood_pressure_2 ~ blood_pressure + blood_pressure_medication + age + bmi_2 + simplified_race + sex_at_birth + income_thousands,
+  chol_2 ~ chol + blood_pressure_medication + age + bmi_2 + simplified_race + sex_at_birth + income_thousands,
+  bmi_2 ~ bmi + simplified_race + income_thousands + college_educ,
+  
+  # Treatment assignment - Time 1
+  blood_pressure_medication ~ blood_pressure + age + sex_at_birth + simplified_race + college_educ + income_thousands,
+  
+  # Other relationships - Time 1
+  blood_pressure ~ age + bmi + simplified_race + sex_at_birth + income_thousands,
+  chol ~ age + bmi + simplified_race + sex_at_birth + income_thousands,
+  bmi ~ simplified_race + income_thousands + college_educ,
+  income_thousands ~ college_educ + simplified_race + age,
+  college_educ ~ simplified_race + age,
+  
+  # Exposure and outcome
+  exposure = "blood_pressure_medication_2",
+  outcome = "mortality",
+  
+  # Variable labels
+  labels = c(
+    "mortality" = "Mortality",
+    "blood_pressure_medication" = "BP Meds (T1)",
+    "blood_pressure_medication_2" = "BP Meds (T2)",
+    "blood_pressure" = "Blood Pressure (T1)",
+    "blood_pressure_2" = "Blood Pressure (T2)",
+    "chol" = "Cholesterol (T1)",
+    "chol_2" = "Cholesterol (T2)",
+    "bmi" = "BMI (T1)",
+    "bmi_2" = "BMI (T2)",
+    "age" = "Age",
+    "sex_at_birth" = "Sex",
+    "simplified_race" = "Race",
+    "college_educ" = "College Ed",
+    "income_thousands" = "Income (thou)"
+  )
+)
+
+# Plot 
+ggdag_status(blood_pressure_dag, 
+             use_labels = "label", 
+             text = FALSE,
+             stylized = TRUE) +
+  theme_dag() +
+  scale_color_manual(values = c("exposure" = "#0073C2", 
+                               "outcome" = "#CD534C",
+                               "latent" = "#grey80")) +
+  guides(color = "none") +  # Remove the legend
+  theme(plot.title = element_text(hjust = 0.5)) +
+  ggtitle("DAG for Blood Pressure Medication and Mortality (with Time Period 2 Vars)")
+
 ```
 
 ## LTMLE Estimation
 
 Use the `ltmle` package for this section. First fit a "naive model" that \textbf{does not} control for the time-dependent confounding. Then run a LTMLE model that does control for any time dependent confounding. Follow the same steps as in the TMLE section. Do you see a difference between the two estimates?
 
-```{r}
-## Naive Model (no time-dependent confounding) estimate
+Naive: Outcomes look worse in treatment than control (52.16% vs 51.63%), but difference is not statistically significant, which is good because we don't want to think that the medication is actually harmful! 
 
-## LTMLE estimate
+2 time-points: The results of the LTLMLE with 1,000 observations and the full SL library and two time-points shows a positive impact of treatment (31.55 percentage points) that's statistically significant. P values are nicely small, confidence intervals don't include zero, risk and odds and additive effect all point towards a real treatment effect. 
+
+Nb: I couldn't run the LTMLE with all the observations -- every time I tried, R crashed. I was able to run it with 1000 observations once, but that took forever. Below, you'll see all my little experiments on how to get a result without R crashing. The only version of the LTMLE that I haven't commented out is the one with 500 observations and the full SL library.
+
+```{r, warning=FALSE}
+#14
+## Naive Model (no time-dependent confounding) estimate
+SL.library <- c(
+  'SL.mean',    # Baseline 
+  'SL.glm',     # Logistic regression
+  'SL.glmnet',  # Lasso and ridge 
+  'SL.ranger',  # Random forest 
+  'SL.xgboost'  # Gradient boosting
+)
+
+#checking
+print(str(heart_disease))
+print(head(heart_disease))
+
+# #for naive model, use only second time period data? 
+# W <- c("blood_pressure_2", "age", "sex_at_birth", "simplified_race", 
+#        "college_educ", "income_thousands", "bmi_2", "chol_2")
+# 
+# Y <- heart_disease$mortality                          # Outcome
+# A <- heart_disease$blood_pressure_medication_2        # Treatment at time 2
+# W_data <- heart_disease[, W]                          # Confounders
+# 
+# 
+# # Fit naive TMLE 
+# naive_result <- tmle::tmle(
+#   Y = Y,                      # Outcome: mortality
+#   A = A,                      # Treatment: blood pressure medication at time 2
+#   W = W_data,                 # Confounders at time 2
+#   Q.SL.library = SL.library,  # SuperLearner library for outcome model
+#   g.SL.library = SL.library,  # SuperLearner library for propensity score model
+#   family = "binomial",        # Binary outcome
+#   verbose = TRUE              # Print detailed output
+# )
+
+#data
+##baseline
+baseline_vars <- c("age", "sex_at_birth", "simplified_race", 
+                  "college_educ", "income_thousands")
+
+## Create data for naive approach (I don't know if this is necessary?)
+naive_data <- heart_disease[, c(baseline_vars, "blood_pressure_medication_2", "mortality")]
+colnames(naive_data)[colnames(naive_data) == "blood_pressure_medication_2"] <- "A"
+colnames(naive_data)[colnames(naive_data) == "mortality"] <- "Y"
+
+# Run naive LTMLE approach (ignoring time-dependency)
+naive_ltmle_result <- ltmle(
+  data = naive_data,
+  Anodes = "A",     # Only final treatment
+  Lnodes = NULL,    # No time-dependent confounders
+  Ynodes = "Y",     # Outcome
+  abar = list(1, 0), # Compare treatment vs no treatment
+  SL.library = SL.library
+)
+
+summary(naive_ltmle_result)
+
+# # Naive -- tried this using ltmle code from class and I couldn't figure it out
+# naive_result2 <- ltmle(
+#   heart_disease,
+#   Anodes = A,
+#   Lnodes = NULL,
+#   Ynodes = Y,
+#   abar = 
+#   #Q.SL.library = SL.library,  # SuperLearner library for outcome model
+#   #g.SL.library = SL.library,  # SuperLearner library for propensity score model
+# )
+
+
+#print("Naive TMLE Results (ignoring time-dependent confounding):")
+# print(naive_result)
+# print(naive_result2)
+
 ```
+
+Below there are a few attempts at running the full LTMLE. R kept quitting whenever I run it. I'm going to try a few things: subset the data, run the same code with a smaller library, to see if that helps at all. 
+
+```{r}
+#15
+## LTMLE estimate
+# 
+# #data
+# ltmle_data <- heart_disease
+# 
+# # Nodes for ltmle:
+# # L1: Baseline covariates (time 1) 
+# # A1: Treatment at time 1
+# # L2: Time-varying covariates at time 2
+# # A2: Treatment at time 2
+# # Y: Outcome
+# 
+# # Rename variables to match ltmle naming convention
+# names(ltmle_data)[names(ltmle_data) == "blood_pressure"] <- "L1_bp"
+# names(ltmle_data)[names(ltmle_data) == "bmi"] <- "L1_bmi"
+# names(ltmle_data)[names(ltmle_data) == "chol"] <- "L1_chol"
+# names(ltmle_data)[names(ltmle_data) == "blood_pressure_medication"] <- "A1"
+# names(ltmle_data)[names(ltmle_data) == "blood_pressure_2"] <- "L2_bp"
+# names(ltmle_data)[names(ltmle_data) == "bmi_2"] <- "L2_bmi"
+# names(ltmle_data)[names(ltmle_data) == "chol_2"] <- "L2_chol"
+# names(ltmle_data)[names(ltmle_data) == "blood_pressure_medication_2"] <- "A2"
+# names(ltmle_data)[names(ltmle_data) == "mortality"] <- "Y"
+# 
+# # Define node lists for ltmle based on the DAG
+# Lnodes <- c("L1_bp", "L1_bmi", "L1_chol", "age", "sex_at_birth", "simplified_race", 
+#            "college_educ", "income_thousands", "L2_bp", "L2_bmi", "L2_chol")
+# Anodes <- c("A1", "A2")
+# Ynodes <- "Y"
+# 
+# # Define treatment regimens to compare
+# # 1. Always treated: Treatment at both time points (1,1)
+# # 2. Never treated: No treatment at both time points (0,0)
+# regimen_treated <- c(1, 1)
+# regimen_control <- c(0, 0)
+# 
+# # Verify data structure before fitting ltmle
+# print("LTMLE data structure:")
+# print(names(ltmle_data))
+# 
+# # Fit ltmle model
+# # We need to separate the time-varying covariates into time-specific nodes for proper time ordering
+# # Based on the DAG:
+# # - At time 1: blood pressure, bmi, chol are affected by age, sex, race, income
+# # - These in turn affect treatment assignment
+# Lnodes1 <- c("L1_bp", "L1_bmi", "L1_chol", "age", "sex_at_birth", "simplified_race", 
+#             "college_educ", "income_thousands") 
+# Lnodes2 <- c("L2_bp", "L2_bmi", "L2_chol")
+# 
+# 
+# # Specify custom formulas that reflect the DAG structure
+# # From the DAG:
+# # - blood_pressure_medication depends on blood_pressure, age, sex_at_birth, race, education, income
+# # - mortality depends on medication, blood_pressure, chol, bmi, age, sex
+# 
+# # Create a named list of formulas for the Q models (outcome regressions)
+# Qform <- c(
+#   Y = "Q.kplus1 ~ A2 + L2_bp + L2_bmi + L2_chol + age + sex_at_birth",
+#   # For time 2 nodes, include previous treatment and baseline
+#   L2_bp = "L2_bp ~ A1 + L1_bp + age + L1_bmi + simplified_race + sex_at_birth + income_thousands",
+#   L2_bmi = "L2_bmi ~ A1 + L1_bmi + simplified_race + income_thousands + college_educ",
+#   L2_chol = "L2_chol ~ A1 + L1_chol + age + L1_bmi + simplified_race + sex_at_birth + income_thousands"
+# )
+# 
+# # Create a named list of formulas for the g models (treatment regressions)
+# gform <- c(
+#   # Treatment at time 1 depends on baseline variables
+#   A1 = "A1 ~ L1_bp + age + sex_at_birth + simplified_race + college_educ + income_thousands",
+#   # Treatment at time 2 depends on previous treatment and updated covariates
+#   A2 = "A2 ~ A1 + L2_bp + age + sex_at_birth + simplified_race + college_educ + income_thousands"
+# )
+# 
+# # Fit the ltmle model -- ERROR HERE
+# ltmle_result <- ltmle(
+#   data = ltmle_data,
+#   Anodes = Anodes,
+#   Lnodes = list(Lnodes1, Lnodes2),  # Specify time-specific L nodes
+#   Ynodes = Ynodes,
+#   abar = list(regimen_treated, regimen_control),  # Compare always treated vs never treated
+#   SL.library = SL.library,
+#   Qform = Qform,  # Use DAG-informed outcome models
+#   gform = gform,  # Use DAG-informed treatment models
+#   variance.method = "tmle"
+# )
+# 
+# # Print ltmle results
+# print("Longitudinal TMLE Results (accounting for time-dependent confounding):")
+# print(summary(ltmle_result))
+# 
+# # Extract and compare results
+# naive_estimate <- naive_result$estimates$ATE$psi
+# naive_ci_lower <- naive_result$estimates$ATE$CI[1]
+# naive_ci_upper <- naive_result$estimates$ATE$CI[2]
+# 
+# ltmle_summary <- summary(ltmle_result)
+# ltmle_estimate <- ltmle_summary$effect.measures$ATE$estimate
+# ltmle_ci_lower <- ltmle_summary$effect.measures$ATE$CI[1]
+# ltmle_ci_upper <- ltmle_summary$effect.measures$ATE$CI[2]
+# 
+# results_df <- data.frame(
+#   Model = c("Naive TMLE", "Longitudinal TMLE"),
+#   Estimate = c(naive_estimate, ltmle_estimate),
+#   CI_Lower = c(naive_ci_lower, ltmle_ci_lower),
+#   CI_Upper = c(naive_ci_upper, ltmle_ci_upper)
+# )
+# 
+# print("Comparison of Estimates:")
+# print(results_df)
+# 
+# # Create a visualization of the results
+# ggplot(results_df, aes(x = Model, y = Estimate)) +
+#   geom_point(size = 3) +
+#   geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper), width = 0.2) +
+#   geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+#   labs(title = "Comparison of Treatment Effect Estimates",
+#        subtitle = "Effect of Blood Pressure Medication on Mortality",
+#        y = "Average Treatment Effect",
+#        x = "") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
+#         plot.title = element_text(hjust = 0.5),
+#         plot.subtitle = element_text(hjust = 0.5))
+# 
+# # Calculate the difference between estimates
+# difference <- ltmle_estimate - naive_estimate
+# difference_percent <- (difference / abs(naive_estimate)) * 100
+# 
+# # Print difference
+# cat("\nDifference between estimates (LTMLE - Naive):", round(difference, 4), "\n")
+# cat("Percent difference:", round(difference_percent, 2), "%\n")
+# 
+# # Interpretation helper
+# if (abs(difference_percent) > 10) {
+#   cat("\nThe difference between estimates is substantial (>10%), suggesting that\n")
+#   cat("time-dependent confounding has a meaningful impact on the treatment effect estimate.\n")
+# } else {
+#   cat("\nThe difference between estimates is modest (<10%), suggesting that\n")
+#   cat("time-dependent confounding may not have a major impact in this specific case.\n")
+# }
+# 
+# # Further analysis to understand the source of differences
+# # Check if treatment assignment at time 2 depends on time-varying covariates
+# cat("\nAnalyzing potential time-dependent confounding based on the DAG structure:\n")
+# 
+# # Based on the DAG, check the relationship between time 1 variables and treatment at time 2
+# # The DAG shows blood_pressure_medication is influenced by blood_pressure, age, sex_at_birth, etc.
+# print("Relationship between time 1 variables and treatment at time 2 (based on DAG):")
+# time_confounding_model <- glm(A2 ~ L1_bp + A1 + age + sex_at_birth + simplified_race + 
+#                             college_educ + income_thousands, 
+#                            family = binomial, data = ltmle_data)
+# print(summary(time_confounding_model))
+# 
+# # Check if time-varying covariates at time 2 are associated with treatment and outcome
+# # Based on the DAG, mortality is influenced by blood_pressure_medication, blood_pressure, chol, bmi, age, sex_at_birth
+# print("Relationship between time 2 variables, treatment, and outcome (based on DAG):")
+# outcome_model <- glm(Y ~ A2 + L2_bp + L2_bmi + L2_chol + age + sex_at_birth, 
+#                     family = binomial, data = ltmle_data)
+# print(summary(outcome_model))
+
+```
+
+
+##Second attempt
+
+```{r}
+# # Preparing data for proper LTMLE approach
+# #16
+# #I don't think my computer can handle this, actually. I am going to subset the data and try a smaller library. see below. 
+# 
+# 
+# ##troubleshooting
+# data_ordered <- heart_disease[, c(
+#   # Baseline covariates and baseline measurements
+#   "age", "sex_at_birth", "simplified_race", "college_educ", "income_thousands",
+#   "bmi", "blood_pressure", "chol",
+#   
+#   # Time 1 treatment
+#   "blood_pressure_medication",
+#   
+#   # Time 2 measurements
+#   "bmi_2", "blood_pressure_2", "chol_2",
+#   
+#   # Time 2 treatment
+#   "blood_pressure_medication_2",
+#   
+#   # Outcome
+#   "mortality"
+# )]
+# 
+# 
+# # Define SuperLearner library
+# SL.library <- c(
+#   'SL.mean',    # Baseline
+#   'SL.glm',     # Logistic regression
+#   'SL.glmnet',  # Lasso and ridge 
+#   'SL.ranger',  # Random forest
+#   'SL.xgboost'  # Gradient boosting
+# )
+# 
+# 
+# # Ltmle nodes order:
+# # 1. Baseline covariates (Lnodes)
+# # 2. Time 1 treatment (Anodes)
+# # 3. Time 2 covariates (Lnodes) 
+# # 4. Time 2 treatment (Anodes)
+# # 5. Outcome (Ynodes)
+# 
+# 
+# # Correct order? 
+# Lnodes <- c(
+#   # Baseline covariates
+#   "age", "sex_at_birth", "simplified_race", "college_educ", "income_thousands",
+#   "bmi", "blood_pressure", "chol",
+#   
+#   # Time 2 measurements (these come after time 1 treatment)
+#   "bmi_2", "blood_pressure_2", "chol_2"
+# )
+# 
+# Anodes <- c("blood_pressure_medication", "blood_pressure_medication_2")
+# Ynodes <- "mortality"
+# 
+# # Run full LTMLE with proper ordering
+# full_ltmle_result <- ltmle(
+#   data = data_ordered, # Use the ordered dataset
+#   Anodes = Anodes,
+#   Lnodes = Lnodes,
+#   Ynodes = Ynodes,
+#   abar = list(c(1,1), c(0,0)),
+#   SL.library = SL.library
+# )
+# 
+# summary(full_ltmle_result)
+```
+
+
+```{r}
+#17
+str(heart_disease)
+names(heart_disease)
+```
+## Subset data
+
+```{r, warning=FALSE}
+#18
+## Subset data -- Nb this actually ran. Going to do a few more experiments below but this might be the version I stick with
+
+
+
+# Define SuperLearner library (same as)
+SL.library <- c(
+  'SL.mean',    # Baseline
+  'SL.glm',     # Logistic regression
+  'SL.glmnet',  # Lasso and ridge 
+  'SL.ranger',  # Random forest
+  'SL.xgboost'  # Gradient boosting
+)
+
+
+# Ltmle nodes order:
+# 1. Baseline covariates (Lnodes)
+# 2. Time 1 treatment (Anodes)
+# 3. Time 2 covariates (Lnodes) 
+# 4. Time 2 treatment (Anodes)
+# 5. Outcome (Ynodes)
+
+set.seed(123)
+
+# Take a random sample of 500 observations
+data_subset <- heart_disease[sample(nrow(heart_disease), 500), ]
+
+
+# order
+data_ordered <- data_subset[, c(
+  # Baseline covariates and baseline measurements
+  "age", "sex_at_birth", "simplified_race", "college_educ", "income_thousands",
+  "bmi", "blood_pressure", "chol",
+  
+  # Time 1 treatment
+  "blood_pressure_medication",
+  
+  # Time 2 measurements
+  "bmi_2", "blood_pressure_2", "chol_2",
+  
+  # Time 2 treatment
+  "blood_pressure_medication_2",
+  
+  # Outcome
+  "mortality"
+)]
+
+# Correct order? 
+Lnodes <- c(
+  # Baseline covariates
+  "age", "sex_at_birth", "simplified_race", "college_educ", "income_thousands",
+  "bmi", "blood_pressure", "chol",
+  
+  # Time 2 measurements (these come after time 1 treatment)
+  "bmi_2", "blood_pressure_2", "chol_2"
+)
+
+Anodes <- c("blood_pressure_medication", "blood_pressure_medication_2")
+Ynodes <- "mortality"
+
+# Run full LTMLE with proper ordering
+full_ltmle_result <- ltmle(
+  data = data_ordered, # Use the ordered dataset
+  Anodes = Anodes,
+  Lnodes = Lnodes,
+  Ynodes = Ynodes,
+  abar = list(c(1,1), c(0,0)),
+  SL.library = SL.library
+)
+
+summary(full_ltmle_result)
+
+```
+
+## Smaller library
+
+```{r, warning=FALSE}
+#19
+# # Smaller library -- this won't run, R crashes
+# 
+# ##troubleshooting
+# data_ordered <- heart_disease[, c(
+#   # Baseline covariates and baseline measurements
+#   "age", "sex_at_birth", "simplified_race", "college_educ", "income_thousands",
+#   "bmi", "blood_pressure", "chol",
+#   
+#   # Time 1 treatment
+#   "blood_pressure_medication",
+#   
+#   # Time 2 measurements
+#   "bmi_2", "blood_pressure_2", "chol_2",
+#   
+#   # Time 2 treatment
+#   "blood_pressure_medication_2",
+#   
+#   # Outcome
+#   "mortality"
+# )]
+# 
+# 
+# # Define SuperLearner library -- taking out a few to see what happens
+# SL.library <- c(
+#   'SL.mean',    # Baseline
+#   #'SL.glm',     # Logistic regression
+#   'SL.glmnet',  # Lasso and ridge 
+#   'SL.ranger'  # Random forest
+#   #'SL.xgboost'  # Gradient boosting
+# )
+# 
+# 
+# # Ltmle nodes order:
+# # 1. Baseline covariates (Lnodes)
+# # 2. Time 1 treatment (Anodes)
+# # 3. Time 2 covariates (Lnodes) 
+# # 4. Time 2 treatment (Anodes)
+# # 5. Outcome (Ynodes)
+# 
+# 
+# # Correct order? 
+# Lnodes <- c(
+#   # Baseline covariates
+#   "age", "sex_at_birth", "simplified_race", "college_educ", "income_thousands",
+#   "bmi", "blood_pressure", "chol",
+#   
+#   # Time 2 measurements (these come after time 1 treatment)
+#   "bmi_2", "blood_pressure_2", "chol_2"
+# )
+# 
+# Anodes <- c("blood_pressure_medication", "blood_pressure_medication_2")
+# Ynodes <- "mortality"
+# 
+# # Run full LTMLE with proper ordering
+# full_ltmle_result <- ltmle(
+#   data = data_ordered, # Use the ordered dataset
+#   Anodes = Anodes,
+#   Lnodes = Lnodes,
+#   Ynodes = Ynodes,
+#   abar = list(c(1,1), c(0,0)),
+#   SL.library = SL.library
+# )
+# 
+# summary(full_ltmle_result)
+```
+
+## Subset of data and smaller library
+```{r, warning=FALSE}
+# 
+# #20
+# ## Subset data + small library
+# 
+# 
+# 
+# # Define SuperLearner library (smaller)
+# SL.library <- c(
+#   'SL.mean',    # Baseline
+#   #'SL.glm',     # Logistic regression
+#   'SL.glmnet',  # Lasso and ridge 
+#   'SL.ranger'  # Random forest
+#   #'SL.xgboost'  # Gradient boosting
+# )
+# 
+# # Ltmle nodes order:
+# # 1. Baseline covariates (Lnodes)
+# # 2. Time 1 treatment (Anodes)
+# # 3. Time 2 covariates (Lnodes) 
+# # 4. Time 2 treatment (Anodes)
+# # 5. Outcome (Ynodes)
+# 
+# set.seed(123)
+# 
+# # Take a random sample of observations -- trying 1000 this time
+# data_subset <- heart_disease[sample(nrow(heart_disease), 1000), ]
+# 
+# 
+# # order
+# data_ordered <- data_subset[, c(
+#   # Baseline covariates and baseline measurements
+#   "age", "sex_at_birth", "simplified_race", "college_educ", "income_thousands",
+#   "bmi", "blood_pressure", "chol",
+#   
+#   # Time 1 treatment
+#   "blood_pressure_medication",
+#   
+#   # Time 2 measurements
+#   "bmi_2", "blood_pressure_2", "chol_2",
+#   
+#   # Time 2 treatment
+#   "blood_pressure_medication_2",
+#   
+#   # Outcome
+#   "mortality"
+# )]
+# 
+# # Correct order? 
+# Lnodes <- c(
+#   # Baseline covariates
+#   "age", "sex_at_birth", "simplified_race", "college_educ", "income_thousands",
+#   "bmi", "blood_pressure", "chol",
+#   
+#   # Time 2 measurements (these come after time 1 treatment)
+#   "bmi_2", "blood_pressure_2", "chol_2"
+# )
+# 
+# Anodes <- c("blood_pressure_medication", "blood_pressure_medication_2")
+# Ynodes <- "mortality"
+# 
+# # Run full LTMLE with proper ordering
+# full_ltmle_result <- ltmle(
+#   data = data_ordered, # Use the ordered dataset
+#   Anodes = Anodes,
+#   Lnodes = Lnodes,
+#   Ynodes = Ynodes,
+#   abar = list(c(1,1), c(0,0)),
+#   SL.library = SL.library
+# )
+# 
+# summary(full_ltmle_result)
+
+```
+
+## Ok I think R was crashing because of the amount of data, not the library, so I'm going to run the code with a subset of 1000 and the bigger library. 
+
+## update -- 500 seems to be about what it can handle in a normal amount of time. commenting other attempts out
+
+```{r, warning=FALSE}
+#21
+## Subset data -- larger subset
+# 
+# 
+# 
+# # Define SuperLearner library (same as)
+# SL.library <- c(
+#   'SL.mean',    # Baseline
+#   'SL.glm',     # Logistic regression
+#   'SL.glmnet',  # Lasso and ridge 
+#   'SL.ranger',  # Random forest
+#   'SL.xgboost'  # Gradient boosting
+# )
+# 
+# 
+# # Ltmle nodes order:
+# # 1. Baseline covariates (Lnodes)
+# # 2. Time 1 treatment (Anodes)
+# # 3. Time 2 covariates (Lnodes) 
+# # 4. Time 2 treatment (Anodes)
+# # 5. Outcome (Ynodes)
+# 
+# set.seed(123)
+# 
+# # Take a random sample of 1000 observations
+# data_subset <- heart_disease[sample(nrow(heart_disease), 1000), ]
+# 
+# 
+# # order
+# data_ordered <- data_subset[, c(
+#   # Baseline covariates and baseline measurements
+#   "age", "sex_at_birth", "simplified_race", "college_educ", "income_thousands",
+#   "bmi", "blood_pressure", "chol",
+#   
+#   # Time 1 treatment
+#   "blood_pressure_medication",
+#   
+#   # Time 2 measurements
+#   "bmi_2", "blood_pressure_2", "chol_2",
+#   
+#   # Time 2 treatment
+#   "blood_pressure_medication_2",
+#   
+#   # Outcome
+#   "mortality"
+# )]
+# 
+# # Correct order? 
+# Lnodes <- c(
+#   # Baseline covariates
+#   "age", "sex_at_birth", "simplified_race", "college_educ", "income_thousands",
+#   "bmi", "blood_pressure", "chol",
+#   
+#   # Time 2 measurements (these come after time 1 treatment)
+#   "bmi_2", "blood_pressure_2", "chol_2"
+# )
+# 
+# Anodes <- c("blood_pressure_medication", "blood_pressure_medication_2")
+# Ynodes <- "mortality"
+# 
+# # Run full LTMLE with proper ordering
+# full_ltmle_result <- ltmle(
+#   data = data_ordered, # Use the ordered dataset
+#   Anodes = Anodes,
+#   Lnodes = Lnodes,
+#   Ynodes = Ynodes,
+#   abar = list(c(1,1), c(0,0)),
+#   SL.library = SL.library
+# )
+# 
+# summary(full_ltmle_result)
+
+```
+# results from naive estimate
+
+ltmle(data = naive_data, Anodes = "A", Lnodes = NULL, Ynodes = "Y", 
+    abar = list(1, 0), SL.library = SL.library)
+
+Treatment Estimate:
+   Parameter Estimate:  0.52163 
+    Estimated Std Err:  0.013638 
+              p-value:  <2e-16 
+    95% Conf Interval: (0.4949, 0.54837) 
+
+Control Estimate:
+   Parameter Estimate:  0.51625 
+    Estimated Std Err:  0.0053737 
+              p-value:  <2e-16 
+    95% Conf Interval: (0.50571, 0.52678) 
+
+Additive Treatment Effect:
+   Parameter Estimate:  0.0053896 
+    Estimated Std Err:  0.014659 
+              p-value:  0.71312 
+    95% Conf Interval: (-0.023341, 0.03412) 
+
+Relative Risk:
+   Parameter Estimate:  1.0104 
+  Est Std Err log(RR):  0.028141 
+              p-value:  0.71208 
+    95% Conf Interval: (0.95622, 1.0677) 
+
+Odds Ratio:
+   Parameter Estimate:  1.0218 
+  Est Std Err log(OR):  0.058739 
+              p-value:  0.71321 
+    95% Conf Interval: (0.91071, 1.1465)
+
+
+Naive: Outcomes look worse in treatment than control (52.16% vs 51.63%), but difference is not statistically significant, which is good because we don't want to think that the medication is actually harmful! 
+
+## Results with 500 and full library
+Call:
+ltmle(data = data_ordered, Anodes = Anodes, Lnodes = Lnodes, 
+    Ynodes = Ynodes, abar = list(c(1, 1), c(0, 0)), SL.library = SL.library)
+
+Treatment Estimate:
+   Parameter Estimate:  0.21251 
+    Estimated Std Err:  0.14686 
+              p-value:  0.14789 
+    95% Conf Interval: (0, 0.50034) 
+
+Control Estimate:
+   Parameter Estimate:  0.59643 
+    Estimated Std Err:  0.026403 
+              p-value:  <2e-16 
+    95% Conf Interval: (0.54468, 0.64818) 
+
+Additive Treatment Effect:
+   Parameter Estimate:  -0.38393 
+    Estimated Std Err:  0.14921 
+              p-value:  0.010081 
+    95% Conf Interval: (-0.67638, -0.091478) 
+
+Relative Risk:
+   Parameter Estimate:  0.3563 
+  Est Std Err log(RR):  0.69249 
+              p-value:  0.13615 
+    95% Conf Interval: (0.091699, 1.3844) 
+
+Odds Ratio:
+   Parameter Estimate:  0.18259 
+  Est Std Err log(OR):  0.88438 
+              p-value:  0.054503 
+    95% Conf Interval: (0.032262, 1.0334) 
+
+## Results with 1000 observations and smaller library
+Treatment Estimate:
+   Parameter Estimate:  0.28869 
+    Estimated Std Err:  0.11583 
+              p-value:  0.012689 
+    95% Conf Interval: (0.061668, 0.5157) 
+
+Control Estimate:
+   Parameter Estimate:  0.58878 
+    Estimated Std Err:  0.018992 
+              p-value:  <2e-16 
+    95% Conf Interval: (0.55156, 0.626) 
+
+Additive Treatment Effect:
+   Parameter Estimate:  -0.3001 
+    Estimated Std Err:  0.11737 
+              p-value:  0.010565 
+    95% Conf Interval: (-0.53014, -0.070048) 
+
+Relative Risk:
+   Parameter Estimate:  0.49031 
+  Est Std Err log(RR):  0.40252 
+              p-value:  0.076619 
+    95% Conf Interval: (0.22277, 1.0792) 
+
+Odds Ratio:
+   Parameter Estimate:  0.28345 
+  Est Std Err log(OR):  0.56949 
+              p-value:  0.026845 
+    95% Conf Interval: (0.09284, 0.86542) 
+
+
+## Results with 1000 observations and full library (took 5 hours, commenting out)
+Call:
+ltmle(data = data_ordered, Anodes = Anodes, Lnodes = Lnodes, 
+    Ynodes = Ynodes, abar = list(c(1, 1), c(0, 0)), SL.library = SL.library)
+
+Treatment Estimate:
+   Parameter Estimate:  0.2741 
+    Estimated Std Err:  0.09844 
+              p-value:  0.0053622 
+    95% Conf Interval: (0.08116, 0.46704) 
+
+Control Estimate:
+   Parameter Estimate:  0.5896 
+    Estimated Std Err:  0.018418 
+              p-value:  <2e-16 
+    95% Conf Interval: (0.5535, 0.62569) 
+
+Additive Treatment Effect:
+   Parameter Estimate:  -0.3155 
+    Estimated Std Err:  0.10015 
+              p-value:  0.0016309 
+    95% Conf Interval: (-0.51178, -0.11921) 
+
+Relative Risk:
+   Parameter Estimate:  0.46489 
+  Est Std Err log(RR):  0.3605 
+              p-value:  0.03361 
+    95% Conf Interval: (0.22935, 0.94234) 
+
+Odds Ratio:
+   Parameter Estimate:  0.26284 
+  Est Std Err log(OR):  0.50057 
+              p-value:  0.0075988 
+    95% Conf Interval: (0.098537, 0.70109) 
+
+The results of the LTLMLE with 1,000 observations and the full SL library and two time-points shows a positive impact of treatment (31.55 percentage points) that's statistically significant. P values are nicely small, confidence intervals don't include zero, risk and odds and additive effect all point towards a real treatment effect.    
+
 
 ## Discussion Questions
 
 \begin{enumerate}
     \item What sorts of time-dependent confounding should we be especially worried about? For instance, would we be concerned about a running variable for age the same way we might be concerned about blood pressure measured at two different times?
 \end{enumerate}
+Time-dependent confounding is worrisome because a treatment can change a variable (e.g. blood pressure), and then that variable can in turn affects future treatments (and outcomes). So some variables are both influenced by earlier treatments and also impact future ones. This means that we have to be careful about adjusting for them, trying not to totally erase their influence but also not allowing them to confound. Unlike things like blood pressure that change quickly and in unexpected ways, age isn’t a confounder because it changes steadily and isn’t affected by treatment.
 
